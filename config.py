@@ -19,6 +19,51 @@ DEFAULT_CLOUD_RUN_URL: str = "https://electiq-ai-253750832620.us-central1.run.ap
 MAX_CONTENT_LENGTH_BYTES: int = 1 * 1024 * 1024
 REQUEST_ID_HEADER: str = "X-Request-ID"
 
+GOOGLE_SERVICES: dict[str, dict[str, object]] = {
+    "gemini": {
+        "name": "Google Gemini 1.5 Flash",
+        "package": "google-generativeai",
+        "purpose": "AI-powered election Q&A chatbot",
+        "enabled": True,
+    },
+    "translate": {
+        "name": "Google Cloud Translate v2",
+        "package": "google-cloud-translate",
+        "purpose": "8-language content translation",
+        "enabled": True,
+    },
+    "vertex_ai": {
+        "name": "Vertex AI + Grounding",
+        "package": "google-cloud-aiplatform",
+        "purpose": "Grounded election fact verification",
+        "enabled": True,
+    },
+    "firebase": {
+        "name": "Firebase Admin + Firestore",
+        "package": "firebase-admin",
+        "purpose": "Chat session history storage",
+        "enabled": True,
+    },
+    "bigquery": {
+        "name": "Google BigQuery",
+        "package": "google-cloud-bigquery",
+        "purpose": "Election query analytics and usage tracking",
+        "enabled": True,
+    },
+    "cloud_storage": {
+        "name": "Google Cloud Storage",
+        "package": "google-cloud-storage",
+        "purpose": "AI response caching and election data exports",
+        "enabled": True,
+    },
+    "cloud_run": {
+        "name": "Google Cloud Run",
+        "package": "N/A - deployment platform",
+        "purpose": "Serverless container deployment with auto-scaling",
+        "enabled": True,
+    },
+}
+
 # === Google AI Services ===
 GEMINI_API_KEY: Optional[str] = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL: str = "gemini-1.5-flash"
@@ -35,6 +80,9 @@ TRANSLATE_ENABLED: bool = os.environ.get("GOOGLE_TRANSLATE_ENABLED", "false").lo
 VERTEX_PROJECT_ID: Optional[str] = os.environ.get("GOOGLE_CLOUD_PROJECT")
 VERTEX_LOCATION: str = os.environ.get("VERTEX_LOCATION", "us-central1")
 VERTEX_GROUNDING_ENABLED: bool = os.environ.get("VERTEX_GROUNDING_ENABLED", "false").lower() == "true"
+FIREBASE_ENABLED: bool = os.environ.get("FIREBASE_ENABLED", "false").lower() == "true"
+FIREBASE_CREDENTIALS_PATH: Optional[str] = os.environ.get("FIREBASE_CREDENTIALS_PATH")
+FIRESTORE_CHAT_COLLECTION: str = os.environ.get("FIRESTORE_CHAT_COLLECTION", "chat_sessions")
 
 # === Rate Limiting ===
 RATELIMIT_ENABLED: bool = True

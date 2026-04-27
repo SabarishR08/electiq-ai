@@ -4,22 +4,20 @@ The service encapsulates initialization, message storage, history retrieval,
 and session deletion behind a small API used by the Flask routes.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Any, Optional
+
+import firebase_admin
+from firebase_admin import auth, credentials, firestore
+from google.cloud import firestore as google_firestore
 
 import config
 from services.exceptions import FirebaseServiceError, ValidationError
 
 logger = logging.getLogger(__name__)
-
-try:
-    import firebase_admin
-    from firebase_admin import credentials, firestore
-
-    FIREBASE_AVAILABLE = True
-except ImportError:
-    FIREBASE_AVAILABLE = False
-    logger.warning("firebase-admin not installed. Firestore chat history will be unavailable.")
+FIREBASE_AVAILABLE = True
 
 
 class FirebaseService:
@@ -28,12 +26,8 @@ class FirebaseService:
     def __init__(self) -> None:
         """Initialize Firebase service if enabled."""
         self.available: bool = False
-        self.db = None
+        self.db: Optional[google_firestore.Client] = None
         self.call_count: int = 0
-
-        if not FIREBASE_AVAILABLE:
-            logger.warning("Firebase service not available: firebase-admin not installed")
-            return
 
         if not config.FIREBASE_ENABLED:
             logger.info("Firebase service disabled: FIREBASE_ENABLED=false")
@@ -86,6 +80,42 @@ class FirebaseService:
         """Return the Firestore session document reference."""
 
         return self.db.collection(config.FIRESTORE_CHAT_COLLECTION).document(session_id)
+
+    def save_session(self, session_id: str, payload: dict[str, Any]) -> bool:
+        """Persist top-level session metadata in Firestore."""
+
+        if not self.available or not self.db:
+            logger.warning("Save session requested but Firebase unavailable")
+            return False
+
+        try:
+            self._validate_session_input(session_id)
+            session_ref = self._get_session_reference(session_id)
+            payload_to_store = dict(payload)
+            payload_to_store.setdefault("created_at", google_firestore.SERVER_TIMESTAMP)
+            payload_to_store["updated_at"] = google_firestore.SERVER_TIMESTAMP
+            session_ref.set(payload_to_store, merge=True)
+            return True
+        except (AttributeError, RuntimeError, ValueError, ValidationError) as exc:
+            logger.error("Error saving session", exc_info=True)
+            return False
+
+    def get_session(self, session_id: str) -> dict[str, Any]:
+        """Return stored session metadata and messages for a session."""
+
+        if not self.available or not self.db:
+            return {}
+
+        try:
+            self._validate_session_input(session_id)
+            session_ref = self._get_session_reference(session_id)
+            session_snapshot = session_ref.get()
+            session_data = session_snapshot.to_dict() if session_snapshot.exists else {}
+            session_data["messages"] = self.get_session_history(session_id)
+            return session_data
+        except (AttributeError, RuntimeError, ValueError, ValidationError) as exc:
+            logger.error("Error retrieving session", exc_info=True)
+            return {}
 
     def _validate_session_input(self, session_id: str, role: Optional[str] = None, content: Optional[str] = None) -> None:
         """Validate Firestore session inputs.

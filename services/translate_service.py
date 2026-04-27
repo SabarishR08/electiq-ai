@@ -4,20 +4,20 @@ The service encapsulates translation, detection, and validation so routes only
 coordinate request parsing and response shaping.
 """
 
+from __future__ import annotations
+
 import logging
+import os
 from typing import Any, Optional
+
+from google.cloud import translate_v2 as translate
+from google.oauth2 import service_account
 
 import config
 from services.exceptions import TranslateServiceError, ValidationError
 
 logger = logging.getLogger(__name__)
-
-try:
-    from google.cloud import translate_v2 as translate
-    TRANSLATE_AVAILABLE = True
-except ImportError:
-    TRANSLATE_AVAILABLE = False
-    logger.warning("google-cloud-translate not installed. Translation will be unavailable.")
+TRANSLATE_AVAILABLE = True
 
 
 class TranslateService:
@@ -26,19 +26,20 @@ class TranslateService:
     def __init__(self) -> None:
         """Initialize translation service if enabled."""
         self.available: bool = False
-        self.client = None
+        self.client: Optional[translate.Client] = None
         self.call_count: int = 0
-
-        if not TRANSLATE_AVAILABLE:
-            logger.warning("Translate service not available: google-cloud-translate not installed")
-            return
 
         if not config.TRANSLATE_ENABLED:
             logger.info("Translate service disabled: GOOGLE_TRANSLATE_ENABLED=false")
             return
 
         try:
-            self.client = translate.Client()
+            credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+            if credentials_path:
+                credentials = service_account.Credentials.from_service_account_file(credentials_path)
+                self.client = translate.Client(credentials=credentials)
+            else:
+                self.client = translate.Client()
             self.available = True
             logger.info("Translate service initialized successfully")
         except (AttributeError, RuntimeError, ValueError, OSError) as exc:
@@ -191,7 +192,21 @@ class TranslateService:
 
     def get_supported_languages(self) -> list[str]:
         """Get list of supported languages."""
-        return config.SUPPORTED_LANGUAGES.copy()
+
+        if not self.client:
+            return config.SUPPORTED_LANGUAGES.copy()
+
+        try:
+            languages = self.client.get_languages()
+            supported_codes = [
+                language.get("language")
+                for language in languages
+                if isinstance(language, dict) and language.get("language")
+            ]
+            return [code for code in supported_codes if isinstance(code, str)] or config.SUPPORTED_LANGUAGES.copy()
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            logger.error("Failed to fetch supported languages", exc_info=True)
+            return config.SUPPORTED_LANGUAGES.copy()
 
 
 # Singleton instance

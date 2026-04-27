@@ -28,3 +28,10 @@ def health_check() -> tuple[dict, int]:
         "version": config.SERVICE_VERSION,
         "component": "api-server",
     }), config.HTTP_OK
+
+
+@health_bp.route("/api/google-services", methods=["GET"])
+def google_services() -> tuple[dict, int]:
+    """Return the Google service registry used by the application."""
+
+    return jsonify({"google_services": config.GOOGLE_SERVICES}), config.HTTP_OK

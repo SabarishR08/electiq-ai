@@ -4,22 +4,21 @@ The service keeps grounding configuration and response formatting isolated from
 the Flask route layer.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Optional
+
+import vertexai
+from google.cloud import aiplatform
+from vertexai.generative_models import GenerativeModel as VertexGenerativeModel
+from vertexai.generative_models import HarmCategory, SafetySetting
 
 import config
 from services.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
-
-try:
-    from google.cloud import aiplatform
-    from google.cloud.aiplatform import generative_models
-
-    AIPLATFORM_AVAILABLE = True
-except ImportError:
-    AIPLATFORM_AVAILABLE = False
-    logger.warning("google-cloud-aiplatform not installed. Vertex AI grounding will be unavailable.")
+AIPLATFORM_AVAILABLE = True
 
 
 class VertexService:
@@ -29,10 +28,7 @@ class VertexService:
         """Initialize Vertex AI service if enabled."""
         self.available: bool = False
         self.call_count: int = 0
-
-        if not AIPLATFORM_AVAILABLE:
-            logger.warning("Vertex AI service not available: google-cloud-aiplatform not installed")
-            return
+        self.model: Optional[VertexGenerativeModel] = None
 
         if not config.VERTEX_GROUNDING_ENABLED:
             logger.info("Vertex AI grounding disabled: VERTEX_GROUNDING_ENABLED=false")
@@ -43,12 +39,23 @@ class VertexService:
             return
 
         try:
+            vertexai.init(project=config.VERTEX_PROJECT_ID, location=config.VERTEX_LOCATION)
             aiplatform.init(project=config.VERTEX_PROJECT_ID, location=config.VERTEX_LOCATION)
+            self.model = VertexGenerativeModel(config.GEMINI_MODEL)
             self.available = True
             logger.info("Vertex AI service initialized for project: %s", config.VERTEX_PROJECT_ID)
         except (AttributeError, RuntimeError, ValueError) as exc:
             logger.error("Failed to initialize Vertex AI service", exc_info=True)
             self.available = False
+
+    def _build_safety_settings(self) -> list[SafetySetting]:
+        """Return the safety policy used for grounded generation."""
+
+        return [
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH),
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH),
+            SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH),
+        ]
 
     def _build_search_query(self, query: str, country: Optional[str]) -> str:
         """Build a context-aware grounding query.
@@ -99,7 +106,21 @@ class VertexService:
             self.call_count += 1
 
             search_query = self._build_search_query(query, country)
-            logger.info(f"Grounded search would query: {search_query} (call #{self.call_count})")
+            logger.info("Grounded search would query: %s (call #%s)", search_query, self.call_count)
+
+            if self.model:
+                response = self.model.generate_content(
+                    search_query,
+                    safety_settings=self._build_safety_settings(),
+                )
+                response_text = getattr(response, "text", "") or ""
+                if response_text:
+                    return {
+                        "answer": response_text,
+                        "sources": [],
+                        "grounded": True,
+                    }
+
             return {
                 "answer": None,
                 "sources": [],

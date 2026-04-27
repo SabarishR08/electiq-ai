@@ -14,6 +14,8 @@ from services.gemini_service import GeminiService, get_gemini_service
 from services.translate_service import TranslateService, get_translate_service
 from services.firebase_service import FirebaseService, get_firebase_service
 from services.vertex_service import VertexService, get_vertex_service
+from services.bigquery_service import BigQueryService, get_bigquery_service
+from services.cloud_storage_service import CloudStorageService, get_cloud_storage_service
 
 
 class TestGeminiService:
@@ -148,6 +150,16 @@ class TestFirebaseService:
         except (ValueError, TypeError):
             pass  # Expected
 
+    def test_save_session_method_exists(self):
+        """Should expose save_session method."""
+        service = FirebaseService()
+        assert hasattr(service, "save_session")
+
+    def test_get_session_method_exists(self):
+        """Should expose get_session method."""
+        service = FirebaseService()
+        assert hasattr(service, "get_session")
+
 
 class TestVertexService:
     """Vertex AI service tests."""
@@ -171,6 +183,75 @@ class TestVertexService:
         """Multiple calls should return same instance."""
         service1 = get_vertex_service()
         service2 = get_vertex_service()
+        assert service1 is service2
+
+
+class TestBigQueryService:
+    """Google BigQuery service tests."""
+
+    def test_bigquery_service_initializes(self):
+        """BigQueryService initializes without crashing when client unavailable."""
+        service = BigQueryService()
+        assert service is not None
+
+    def test_bigquery_log_query_event_handles_unavailable(self):
+        """log_query_event returns False gracefully when BigQuery unavailable."""
+        service = BigQueryService()
+        service.client = None
+        result = service.log_query_event("india", "timeline", "test-session")
+        assert result is False
+
+    def test_bigquery_get_popular_countries_handles_unavailable(self):
+        """get_popular_countries should return an empty list when unavailable."""
+        service = BigQueryService()
+        service.client = None
+        assert service.get_popular_countries() == []
+
+    def test_bigquery_get_usage_stats_handles_unavailable(self):
+        """get_usage_stats should return empty metrics when unavailable."""
+        service = BigQueryService()
+        service.client = None
+        stats = service.get_usage_stats()
+        assert stats["total_queries"] == 0
+        assert stats["unique_sessions"] == 0
+
+    def test_bigquery_singleton_pattern(self):
+        """Multiple calls should return same instance."""
+        service1 = get_bigquery_service()
+        service2 = get_bigquery_service()
+        assert service1 is service2
+
+
+class TestCloudStorageService:
+    """Google Cloud Storage service tests."""
+
+    def test_cloud_storage_service_initializes(self):
+        """CloudStorageService initializes without crashing when client unavailable."""
+        service = CloudStorageService()
+        assert service is not None
+
+    def test_export_election_data_handles_unavailable(self):
+        """export_election_data should return None when storage is unavailable."""
+        service = CloudStorageService()
+        service.client = None
+        assert service.export_election_data("india", {"name": "India"}) is None
+
+    def test_get_cached_ai_response_handles_unavailable(self):
+        """get_cached_ai_response should return None when storage is unavailable."""
+        service = CloudStorageService()
+        service.client = None
+        assert service.get_cached_ai_response("cache-key") is None
+
+    def test_cache_ai_response_handles_unavailable(self):
+        """cache_ai_response should return False when storage is unavailable."""
+        service = CloudStorageService()
+        service.client = None
+        assert service.cache_ai_response("cache-key", "response") is False
+
+    def test_cloud_storage_singleton_pattern(self):
+        """Multiple calls should return same instance."""
+        service1 = get_cloud_storage_service()
+        service2 = get_cloud_storage_service()
         assert service1 is service2
 
 

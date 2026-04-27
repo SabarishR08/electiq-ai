@@ -12,6 +12,7 @@ from typing import Any, Mapping
 from flask import Flask, Response, g, jsonify, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from google.cloud import logging as cloud_logging
 
 import config
 from routes.analytics import analytics_bp
@@ -27,6 +28,17 @@ from services.security_service import get_security_service
 logging.basicConfig(level=logging.INFO, format=config.LOG_FORMAT)
 logger = logging.getLogger(__name__)
 security_service = get_security_service()
+
+
+def setup_cloud_logging() -> None:
+    """Initialize Google Cloud Logging when the runtime supports it."""
+
+    try:
+        client = cloud_logging.Client()
+        client.setup_logging()
+        logger.info("Google Cloud Logging initialized")
+    except Exception as exc:  # pragma: no cover - defensive integration guard
+        logger.warning("Cloud Logging unavailable, using local: %s", exc)
 
 
 def _build_country_summary(elections_data: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -113,6 +125,7 @@ def create_app() -> Flask:
     app.config["SECRET_KEY"] = config.SECRET_KEY
     app.config["TESTING"] = config.TESTING
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH_BYTES
+    setup_cloud_logging()
 
     if config.RATELIMIT_ENABLED:
         Limiter(

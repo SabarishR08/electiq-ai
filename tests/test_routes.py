@@ -57,6 +57,14 @@ class TestHealthRoute:
         data = json.loads(res.data)
         assert data["service"] == "ElectIQ"
 
+    def test_google_services_registry(self, client):
+        """Google services endpoint should return registry metadata."""
+        res = client.get("/api/google-services")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert "google_services" in data
+        assert "gemini" in data["google_services"]
+
 
 class TestElectionsRoute:
     """Election data endpoints tests."""

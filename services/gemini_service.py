@@ -7,17 +7,15 @@ selection isolated from the Flask routes that consume it.
 import logging
 from typing import Any, Optional
 
+from google.generativeai import GenerativeModel
+import google.generativeai as genai
+from google.generativeai.types import HarmBlockThreshold, HarmCategory
+
 import config
 from services.exceptions import GeminiServiceError
 
 logger = logging.getLogger(__name__)
-
-try:
-    import google.generativeai as genai
-    GENAI_AVAILABLE = True
-except ImportError:
-    GENAI_AVAILABLE = False
-    logger.warning("google-generativeai not installed. AI chat will be unavailable.")
+GENAI_AVAILABLE = True
 
 
 class GeminiService:
@@ -26,12 +24,8 @@ class GeminiService:
     def __init__(self) -> None:
         """Initialize Gemini service with API key if available."""
         self.available: bool = False
-        self.model = None
+        self.model: Optional[GenerativeModel] = None
         self.call_count: int = 0
-
-        if not GENAI_AVAILABLE:
-            logger.warning("Gemini service not available: google-generativeai not installed")
-            return
 
         if not config.GEMINI_API_KEY:
             logger.warning("Gemini service not available: GEMINI_API_KEY not set")
@@ -39,12 +33,22 @@ class GeminiService:
 
         try:
             genai.configure(api_key=config.GEMINI_API_KEY)
-            self.model = genai.GenerativeModel(config.GEMINI_MODEL)
+            self.model = GenerativeModel(config.GEMINI_MODEL)
             self.available = True
             logger.info("Gemini service initialized with model: %s", config.GEMINI_MODEL)
         except (AttributeError, RuntimeError, ValueError) as exc:
             logger.error("Failed to initialize Gemini service", exc_info=True)
             raise GeminiServiceError("Gemini service initialization failed") from exc
+
+    def _build_safety_settings(self) -> dict[HarmCategory, HarmBlockThreshold]:
+        """Return the Gemini safety thresholds used for content generation."""
+
+        return {
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
 
     def _build_conversation(self, user_message: str, history: Optional[list[dict[str, Any]]]) -> str:
         """Build the Gemini prompt from system instructions, history, and the new message.
@@ -137,6 +141,7 @@ class GeminiService:
                     temperature=temperature,
                     max_output_tokens=512,
                 ),
+                safety_settings=self._build_safety_settings(),
             )
             if response and response.text:
                 logger.info("Gemini response generated (call #%s)", self.call_count)
@@ -179,6 +184,7 @@ class GeminiService:
                     temperature=0.2,
                     max_output_tokens=180,
                 ),
+                safety_settings=self._build_safety_settings(),
             )
             if response and response.text:
                 return response.text.strip()
