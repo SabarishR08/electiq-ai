@@ -1,92 +1,90 @@
-"""
-ElectIQ Configuration
-All environment variables, constants, and settings
+"""Application configuration constants for ElectIQ.
+
+The module centralizes environment reads and shared constants used by routes,
+services, and app startup. It intentionally contains no business logic.
 """
 
 import os
-from typing import Optional
+from typing import Final, Optional
 
-# ──────────────────────────────────────────────
-# FLASK CONFIG
-# ──────────────────────────────────────────────
-
+# === API Configuration ===
 SECRET_KEY: str = os.environ.get("SECRET_KEY", "electiq-dev-key-2026-change-in-production")
 DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
 TESTING: bool = os.environ.get("TESTING", "false").lower() == "true"
 PORT: int = int(os.environ.get("PORT", 8080))
 HOST: str = os.environ.get("HOST", "0.0.0.0")
+SERVICE_NAME: str = "ElectIQ"
+SERVICE_VERSION: str = "1.0.0"
+DEFAULT_CLOUD_RUN_URL: str = "https://electiq-ai-253750832620.us-central1.run.app"
 
-# ──────────────────────────────────────────────
-# GOOGLE GEMINI API
-# ──────────────────────────────────────────────
-
+# === Google AI Services ===
 GEMINI_API_KEY: Optional[str] = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL: str = "gemini-1.5-flash"
-
-# System prompt for Gemini AI
-SYSTEM_PROMPT: str = """You are ElectIQ, a friendly and knowledgeable election education assistant. You help people understand electoral systems, voting processes, timelines, and democratic participation worldwide.
-
-You have deep knowledge about elections in India, the USA, UK, EU, Brazil, and other countries.
-
-Be concise, factual, and engaging. Use emojis sparingly. If asked about a specific country, provide accurate details about their electoral system. Always encourage civic participation.
-
-If asked something outside elections/democracy/voting, politely redirect to your area of expertise.
-
-Keep answers under 200 words unless complex detail is requested."""
-
-# ──────────────────────────────────────────────
-# GOOGLE CLOUD TRANSLATE V2
-# ──────────────────────────────────────────────
-
+SYSTEM_PROMPT: str = (
+    "You are ElectIQ, a friendly and knowledgeable election education assistant. "
+    "You help people understand electoral systems, voting processes, timelines, and democratic participation worldwide.\n\n"
+    "You have deep knowledge about elections in India, the USA, UK, EU, Brazil, and other countries.\n\n"
+    "Be concise, factual, and engaging. Use emojis sparingly. If asked about a specific country, provide accurate details "
+    "about their electoral system. Always encourage civic participation.\n\n"
+    "If asked something outside elections/democracy/voting, politely redirect to your area of expertise.\n\n"
+    "Keep answers under 200 words unless complex detail is requested."
+)
 TRANSLATE_ENABLED: bool = os.environ.get("GOOGLE_TRANSLATE_ENABLED", "false").lower() == "true"
-SUPPORTED_LANGUAGES: list[str] = ["en", "hi", "ta", "es", "fr", "de", "pt", "ar"]
-
-# ──────────────────────────────────────────────
-# VERTEX AI GROUNDING
-# ──────────────────────────────────────────────
-
 VERTEX_PROJECT_ID: Optional[str] = os.environ.get("GOOGLE_CLOUD_PROJECT")
 VERTEX_LOCATION: str = os.environ.get("VERTEX_LOCATION", "us-central1")
 VERTEX_GROUNDING_ENABLED: bool = os.environ.get("VERTEX_GROUNDING_ENABLED", "false").lower() == "true"
 
-# ──────────────────────────────────────────────
-# FIREBASE / FIRESTORE
-# ──────────────────────────────────────────────
-
-FIREBASE_CREDENTIALS_PATH: Optional[str] = os.environ.get("FIREBASE_CREDENTIALS_PATH")
-FIREBASE_ENABLED: bool = os.environ.get("FIREBASE_ENABLED", "false").lower() == "true"
-FIRESTORE_CHAT_COLLECTION: str = "chat_sessions"
-CHAT_HISTORY_TTL_HOURS: int = 24
-
-# ──────────────────────────────────────────────
-# RATE LIMITING
-# ──────────────────────────────────────────────
-
+# === Rate Limiting ===
 RATELIMIT_ENABLED: bool = True
 RATELIMIT_STORAGE_URI: str = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
 CHAT_REQUESTS_PER_MINUTE: int = 20
 TRANSLATE_REQUESTS_PER_MINUTE: int = 30
 GENERAL_REQUESTS_PER_MINUTE: int = 60
 
-# ──────────────────────────────────────────────
-# SECURITY HEADERS
-# ──────────────────────────────────────────────
+# === Input Validation ===
+MIN_MESSAGE_LENGTH: int = 1
+MAX_MESSAGE_LENGTH: int = 500
+MAX_TEXT_TRANSLATION_LENGTH: int = 5000
+MAX_SESSION_ID_LENGTH: int = 100
+CHAT_HISTORY_MAX_LENGTH: int = 8
+RESPONSE_TIMEOUT_SECONDS: int = 60
+CACHE_TTL_SECONDS: int = 3600
+SUPPORTED_LANGUAGES: list[str] = ["en", "hi", "ta", "es", "fr", "de", "pt", "ar"]
+ELECTION_COUNTRY_IDS: list[str] = ["india", "usa", "uk", "eu", "brazil"]
+ALLOWED_COUNTRIES: list[str] = ELECTION_COUNTRY_IDS
 
-ALLOWED_ORIGINS: list[str] = [
-    "http://localhost:8080",
-    "http://localhost:5000",
-    "http://127.0.0.1:8080",
-    "https://electiq-ai.example.com"  # Update with actual Cloud Run URL
-]
+# === Supported Languages ===
+DEFAULT_SOURCE_LANGUAGE: str = "en"
+
+# === Election Countries ===
+COUNTRY_INDIA: str = "india"
+COUNTRY_USA: str = "usa"
+COUNTRY_UK: str = "uk"
+COUNTRY_EU: str = "eu"
+COUNTRY_BRAZIL: str = "brazil"
+
+# === Security Headers ===
+HEADER_CONTENT_TYPE_OPTIONS: str = "X-Content-Type-Options"
+HEADER_FRAME_OPTIONS: str = "X-Frame-Options"
+HEADER_XSS_PROTECTION: str = "X-XSS-Protection"
+HEADER_REFERRER_POLICY: str = "Referrer-Policy"
+HEADER_CONTENT_SECURITY_POLICY: str = "Content-Security-Policy"
+HEADER_PERMISSIONS_POLICY: str = "Permissions-Policy"
+HEADER_VALUE_NOSNIFF: str = "nosniff"
+HEADER_VALUE_SAMEORIGIN: str = "SAMEORIGIN"
+HEADER_VALUE_XSS_BLOCK: str = "1; mode=block"
+HEADER_VALUE_STRICT_REFERRER_POLICY: str = "strict-origin-when-cross-origin"
+HEADER_VALUE_PERMISSIONS_POLICY: str = (
+    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+)
 
 CORS_HEADERS: dict[str, str] = {
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "SAMEORIGIN",
-    "X-XSS-Protection": "1; mode=block",
-    "Referrer-Policy": "strict-origin-when-cross-origin",
+    HEADER_CONTENT_TYPE_OPTIONS: HEADER_VALUE_NOSNIFF,
+    HEADER_FRAME_OPTIONS: HEADER_VALUE_SAMEORIGIN,
+    HEADER_XSS_PROTECTION: HEADER_VALUE_XSS_BLOCK,
+    HEADER_REFERRER_POLICY: HEADER_VALUE_STRICT_REFERRER_POLICY,
 }
 
-# Content Security Policy
 CSP_HEADER: str = (
     "default-src 'self'; "
     "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
@@ -97,34 +95,33 @@ CSP_HEADER: str = (
     "frame-ancestors 'none';"
 )
 
-# ──────────────────────────────────────────────
-# INPUT VALIDATION
-# ──────────────────────────────────────────────
-
-MAX_MESSAGE_LENGTH: int = 500
-MAX_TEXT_TRANSLATION_LENGTH: int = 5000
-MIN_MESSAGE_LENGTH: int = 1
-ALLOWED_COUNTRIES: list[str] = ["india", "usa", "uk", "eu", "brazil"]
-
-# ──────────────────────────────────────────────
-# DATA FILES
-# ──────────────────────────────────────────────
-
+# === Data Files ===
 DATA_DIR: str = os.path.join(os.path.dirname(__file__), "data")
 ELECTIONS_DATA_FILE: str = os.path.join(DATA_DIR, "elections.json")
 GLOSSARY_DATA_FILE: str = os.path.join(DATA_DIR, "glossary.json")
 
-# ──────────────────────────────────────────────
-# LOGGING
-# ──────────────────────────────────────────────
-
+# === Logging ===
 LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "INFO")
 LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-# ──────────────────────────────────────────────
-# PERFORMANCE
-# ──────────────────────────────────────────────
+# === Error Messages ===
+ERROR_CONTENT_TYPE_JSON: str = "Content-Type must be application/json"
+ERROR_MESSAGE_REQUIRED: str = "Message is required"
+ERROR_TRANSLATION_TEXT_REQUIRED: str = "Text is required"
+ERROR_COUNTRY_NOT_FOUND: str = "Country not found"
+ERROR_FAILED_RESPONSE: str = "Failed to generate response"
+ERROR_FAILED_TRANSLATION: str = "Failed to translate text"
+ERROR_FAILED_HISTORY: str = "Failed to retrieve chat history"
+ERROR_FAILED_GLOSSARY: str = "Failed to fetch glossary"
+ERROR_FAILED_LANGUAGE_DETECTION: str = "Failed to detect language"
+ERROR_INVALID_SESSION_ID: str = "Invalid session_id"
 
-CHAT_HISTORY_MAX_LENGTH: int = 8  # Keep last 8 messages for context
-RESPONSE_TIMEOUT_SECONDS: int = 60
-CACHE_TTL_SECONDS: int = 3600
+# === HTTP Status Codes ===
+HTTP_OK: int = 200
+HTTP_BAD_REQUEST: int = 400
+HTTP_NOT_FOUND: int = 404
+HTTP_SERVICE_UNAVAILABLE: int = 503
+HTTP_INTERNAL_SERVER_ERROR: int = 500
+
+# Backwards-compatible aliases for existing call sites.
+DEFAULT_LANGUAGE: Final[str] = DEFAULT_SOURCE_LANGUAGE

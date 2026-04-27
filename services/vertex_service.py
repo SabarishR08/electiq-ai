@@ -1,15 +1,14 @@
-"""
-Google Vertex AI Search Service
-Handles grounded search and fact-checked election Q&A
+"""Google Vertex AI grounding service for election search responses.
+
+The service keeps grounding configuration and response formatting isolated from
+the Flask route layer.
 """
 
 import logging
 from typing import Optional
-from config import (
-    VERTEX_PROJECT_ID,
-    VERTEX_LOCATION,
-    VERTEX_GROUNDING_ENABLED,
-)
+
+import config
+from services.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +23,7 @@ except ImportError:
 
 
 class VertexService:
-    """
-    Wrapper for Google Vertex AI Search and grounding.
-    Provides fact-checked, sourced election Q&A using Google Search grounding.
-    """
+    """Wrapper for Vertex AI grounding and citation formatting."""
 
     def __init__(self) -> None:
         """Initialize Vertex AI service if enabled."""
@@ -38,21 +34,46 @@ class VertexService:
             logger.warning("Vertex AI service not available: google-cloud-aiplatform not installed")
             return
 
-        if not VERTEX_GROUNDING_ENABLED:
+        if not config.VERTEX_GROUNDING_ENABLED:
             logger.info("Vertex AI grounding disabled: VERTEX_GROUNDING_ENABLED=false")
             return
 
-        if not VERTEX_PROJECT_ID:
+        if not config.VERTEX_PROJECT_ID:
             logger.warning("Vertex AI service not available: GOOGLE_CLOUD_PROJECT not set")
             return
 
         try:
-            aiplatform.init(project=VERTEX_PROJECT_ID, location=VERTEX_LOCATION)
+            aiplatform.init(project=config.VERTEX_PROJECT_ID, location=config.VERTEX_LOCATION)
             self.available = True
-            logger.info(f"Vertex AI service initialized for project: {VERTEX_PROJECT_ID}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Vertex AI service: {e}")
+            logger.info("Vertex AI service initialized for project: %s", config.VERTEX_PROJECT_ID)
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Failed to initialize Vertex AI service", exc_info=True)
             self.available = False
+
+    def _build_search_query(self, query: str, country: Optional[str]) -> str:
+        """Build a context-aware grounding query.
+
+        Args:
+            query: User search prompt.
+            country: Optional country context.
+
+        Returns:
+            Search query string to send to Vertex AI.
+        """
+
+        if country:
+            return f"{country} election {query}"
+        return query
+
+    def _build_unavailable_response(self) -> dict[str, object]:
+        """Return the standard unavailable grounding payload."""
+
+        return {
+            "answer": None,
+            "sources": [],
+            "grounded": False,
+            "error": "Vertex AI grounding service unavailable",
+        }
 
     def search_with_grounding(
         self,
@@ -72,26 +93,13 @@ class VertexService:
         """
         if not self.available:
             logger.warning("Grounded search requested but service unavailable")
-            return {
-                "answer": None,
-                "sources": [],
-                "grounded": False,
-                "error": "Vertex AI grounding service unavailable",
-            }
+            return self._build_unavailable_response()
 
         try:
             self.call_count += 1
 
-            # Build context-aware query
-            search_query = query
-            if country:
-                search_query = f"{country} election {query}"
-
-            # TODO: Implement actual Vertex AI Search when credentials are available
-            # For now, return structured response format
+            search_query = self._build_search_query(query, country)
             logger.info(f"Grounded search would query: {search_query} (call #{self.call_count})")
-
-            # Placeholder for actual grounding implementation
             return {
                 "answer": None,
                 "sources": [],
@@ -99,13 +107,13 @@ class VertexService:
                 "message": "Vertex AI grounding not fully configured in this environment",
             }
 
-        except Exception as e:
-            logger.error(f"Vertex AI search error: {e}")
+        except (AttributeError, TypeError, ValueError, ValidationError) as exc:
+            logger.error("Vertex AI search error", exc_info=True)
             return {
                 "answer": None,
                 "sources": [],
                 "grounded": False,
-                "error": str(e),
+                "error": str(exc),
             }
 
     def cite_sources(self, sources: list[dict]) -> str:

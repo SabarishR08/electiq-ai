@@ -1,17 +1,14 @@
-"""
-Firebase / Firestore Service
-Handles chat session storage and history management
+"""Firebase / Firestore service for chat session persistence.
+
+The service encapsulates initialization, message storage, history retrieval,
+and session deletion behind a small API used by the Flask routes.
 """
 
 import logging
-from typing import Optional
-from datetime import datetime, timedelta
-from config import (
-    FIREBASE_ENABLED,
-    FIREBASE_CREDENTIALS_PATH,
-    FIRESTORE_CHAT_COLLECTION,
-    CHAT_HISTORY_TTL_HOURS,
-)
+from typing import Any, Optional
+
+import config
+from services.exceptions import FirebaseServiceError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +23,7 @@ except ImportError:
 
 
 class FirebaseService:
-    """
-    Wrapper for Firebase Admin SDK and Firestore.
-    Stores and retrieves chat session history with automatic TTL.
-    """
+    """Wrapper around Firebase Admin SDK and Firestore."""
 
     def __init__(self) -> None:
         """Initialize Firebase service if enabled."""
@@ -41,29 +35,73 @@ class FirebaseService:
             logger.warning("Firebase service not available: firebase-admin not installed")
             return
 
-        if not FIREBASE_ENABLED:
+        if not config.FIREBASE_ENABLED:
             logger.info("Firebase service disabled: FIREBASE_ENABLED=false")
             return
 
         try:
-            # Check if Firebase app is already initialized
-            try:
-                app = firebase_admin.get_app()
-            except ValueError:
-                # App not initialized, initialize it
-                if FIREBASE_CREDENTIALS_PATH:
-                    cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
-                    app = firebase_admin.initialize_app(cred)
-                else:
-                    # Use Application Default Credentials (works on Cloud Run)
-                    app = firebase_admin.initialize_app()
-
+            self._initialize_app()
             self.db = firestore.client()
             self.available = True
             logger.info("Firebase service initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase service: {e}")
+        except (AttributeError, RuntimeError, ValueError, FirebaseServiceError) as exc:
+            logger.error("Failed to initialize Firebase service", exc_info=True)
             self.available = False
+
+    def _initialize_app(self) -> Any:
+        """Initialize the Firebase Admin app if it is not already configured.
+
+        Returns:
+            The initialized or existing Firebase app object.
+
+        Raises:
+            FirebaseServiceError: If initialization cannot be completed.
+        """
+
+        try:
+            return firebase_admin.get_app()
+        except ValueError:
+            if config.FIREBASE_CREDENTIALS_PATH:
+                cred = credentials.Certificate(config.FIREBASE_CREDENTIALS_PATH)
+                return firebase_admin.initialize_app(cred)
+
+            return firebase_admin.initialize_app()
+
+    def _build_message_payload(
+        self,
+        role: str,
+        content: str,
+        metadata: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build a Firestore message payload."""
+
+        return {
+            "role": role,
+            "content": content,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+            "metadata": metadata or {},
+        }
+
+    def _get_session_reference(self, session_id: str) -> Any:
+        """Return the Firestore session document reference."""
+
+        return self.db.collection(config.FIRESTORE_CHAT_COLLECTION).document(session_id)
+
+    def _validate_session_input(self, session_id: str, role: Optional[str] = None, content: Optional[str] = None) -> None:
+        """Validate Firestore session inputs.
+
+        Raises:
+            ValidationError: If any input is empty.
+        """
+
+        if not session_id:
+            raise ValidationError("Invalid session_id")
+
+        if role is not None and not role:
+            raise ValidationError("Invalid role")
+
+        if content is not None and not content:
+            raise ValidationError("Invalid content")
 
     def save_message(
         self,
@@ -88,41 +126,30 @@ class FirebaseService:
             logger.warning("Save message requested but Firebase unavailable")
             return False
 
-        if not session_id or not role or not content:
-            logger.warning("Invalid message parameters")
+        try:
+            self._validate_session_input(session_id, role, content)
+        except ValidationError as exc:
+            logger.warning("Invalid message parameters: %s", exc)
             return False
 
         try:
             self.call_count += 1
-
-            # Document reference: chat_sessions/{session_id}/messages/{timestamp}
-            collection_ref = self.db.collection(FIRESTORE_CHAT_COLLECTION).document(session_id)
-
-            # Set TTL metadata on session doc if first message
-            collection_ref.set(
+            session_ref = self._get_session_reference(session_id)
+            session_ref.set(
                 {
                     "created_at": firestore.SERVER_TIMESTAMP,
                     "updated_at": firestore.SERVER_TIMESTAMP,
-                    "ttl": firestore.SERVER_TIMESTAMP,  # Firestore TTL policy will auto-delete
+                    "ttl": firestore.SERVER_TIMESTAMP,
                     "message_count": firestore.Increment(1),
                 },
                 merge=True,
             )
-
-            # Add individual message
-            messages_ref = collection_ref.collection("messages")
-            messages_ref.add({
-                "role": role,
-                "content": content,
-                "timestamp": firestore.SERVER_TIMESTAMP,
-                "metadata": metadata or {},
-            })
-
-            logger.info(f"Message saved to session {session_id} (call #{self.call_count})")
+            session_ref.collection("messages").add(self._build_message_payload(role, content, metadata))
+            logger.info("Message saved to session %s (call #%s)", session_id, self.call_count)
             return True
 
-        except Exception as e:
-            logger.error(f"Error saving message: {e}")
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Error saving message", exc_info=True)
             return False
 
     def get_session_history(self, session_id: str, limit: int = 20) -> list[dict]:
@@ -140,38 +167,42 @@ class FirebaseService:
             logger.warning("Get history requested but Firebase unavailable")
             return []
 
-        if not session_id:
-            logger.warning("Invalid session_id")
+        try:
+            self._validate_session_input(session_id)
+        except ValidationError as exc:
+            logger.warning("Invalid session_id: %s", exc)
             return []
 
         try:
             self.call_count += 1
 
             messages_ref = (
-                self.db.collection(FIRESTORE_CHAT_COLLECTION)
-                .document(session_id)
+                self._get_session_reference(session_id)
                 .collection("messages")
                 .order_by("timestamp", direction=firestore.Query.DESCENDING)
                 .limit(limit)
             )
 
             docs = messages_ref.stream()
-            history = []
+            history: list[dict[str, Any]] = []
 
             for doc in docs:
                 data = doc.to_dict()
-                history.insert(0, {
-                    "id": doc.id,
-                    "role": data.get("role"),
-                    "content": data.get("content"),
-                    "timestamp": data.get("timestamp"),
-                })
+                history.insert(
+                    0,
+                    {
+                        "id": doc.id,
+                        "role": data.get("role"),
+                        "content": data.get("content"),
+                        "timestamp": data.get("timestamp"),
+                    },
+                )
 
-            logger.info(f"Retrieved {len(history)} messages from session {session_id}")
+            logger.info("Retrieved %s messages from session %s", len(history), session_id)
             return history
 
-        except Exception as e:
-            logger.error(f"Error retrieving history: {e}")
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Error retrieving history", exc_info=True)
             return []
 
     def delete_session(self, session_id: str) -> bool:
@@ -188,28 +219,26 @@ class FirebaseService:
             logger.warning("Delete session requested but Firebase unavailable")
             return False
 
-        if not session_id:
-            logger.warning("Invalid session_id")
+        try:
+            self._validate_session_input(session_id)
+        except ValidationError as exc:
+            logger.warning("Invalid session_id: %s", exc)
             return False
 
         try:
             self.call_count += 1
-
-            session_ref = self.db.collection(FIRESTORE_CHAT_COLLECTION).document(session_id)
-
-            # Delete all messages in the session
+            session_ref = self._get_session_reference(session_id)
             messages = session_ref.collection("messages").stream()
             for msg in messages:
                 msg.reference.delete()
 
-            # Delete the session document
             session_ref.delete()
 
-            logger.info(f"Session {session_id} deleted")
+            logger.info("Session %s deleted", session_id)
             return True
 
-        except Exception as e:
-            logger.error(f"Error deleting session: {e}")
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Error deleting session", exc_info=True)
             return False
 
     def is_available(self) -> bool:

@@ -1,5 +1,8 @@
-"""
-ElectIQ Services Package
-"""
+"""Public service exports for the ElectIQ application."""
 
-__all__ = ["gemini_service", "translate_service", "vertex_service", "firebase_service"]
+from services.firebase_service import FirebaseService
+from services.gemini_service import GeminiService
+from services.translate_service import TranslateService
+from services.vertex_service import VertexService
+
+__all__ = ["GeminiService", "TranslateService", "VertexService", "FirebaseService"]

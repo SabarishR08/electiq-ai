@@ -1,11 +1,14 @@
-"""
-Google Gemini AI Service
-Handles chat interactions using Google's Gemini 1.5 Flash model
+"""Google Gemini AI service wrapper for election chat responses.
+
+The service keeps Gemini initialization, prompt construction, and fallback
+selection isolated from the Flask routes that consume it.
 """
 
 import logging
-from typing import Optional
-from config import GEMINI_API_KEY, GEMINI_MODEL, SYSTEM_PROMPT, CHAT_HISTORY_MAX_LENGTH
+from typing import Any, Optional
+
+import config
+from services.exceptions import GeminiServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +21,7 @@ except ImportError:
 
 
 class GeminiService:
-    """
-    Wrapper for Google Gemini 1.5 Flash API.
-    Handles message generation, context management, and error handling.
-    """
+    """Wrapper around the Google Gemini chat model."""
 
     def __init__(self) -> None:
         """Initialize Gemini service with API key if available."""
@@ -33,89 +33,43 @@ class GeminiService:
             logger.warning("Gemini service not available: google-generativeai not installed")
             return
 
-        if not GEMINI_API_KEY:
+        if not config.GEMINI_API_KEY:
             logger.warning("Gemini service not available: GEMINI_API_KEY not set")
             return
 
         try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            self.model = genai.GenerativeModel(GEMINI_MODEL)
+            genai.configure(api_key=config.GEMINI_API_KEY)
+            self.model = genai.GenerativeModel(config.GEMINI_MODEL)
             self.available = True
-            logger.info(f"Gemini service initialized with model: {GEMINI_MODEL}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini service: {e}")
-            self.available = False
+            logger.info("Gemini service initialized with model: %s", config.GEMINI_MODEL)
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Failed to initialize Gemini service", exc_info=True)
+            raise GeminiServiceError("Gemini service initialization failed") from exc
 
-    def generate_response(
-        self,
-        user_message: str,
-        history: Optional[list[dict]] = None,
-        temperature: float = 0.7,
-    ) -> str:
-        """
-        Generate a response using Gemini API.
+    def _build_conversation(self, user_message: str, history: Optional[list[dict[str, Any]]]) -> str:
+        """Build the Gemini prompt from system instructions, history, and the new message.
 
         Args:
-            user_message: The user's question or message
-            history: Previous chat messages for context
-            temperature: Sampling temperature (0.0-1.0)
+            user_message: Current user question.
+            history: Recent message history for conversational context.
 
         Returns:
-            The AI-generated response as a string
+            A single prompt string ready for Gemini.
         """
-        if not self.available or not self.model:
-            return self._fallback_response(user_message)
 
-        try:
-            self.call_count += 1
+        conversation = config.SYSTEM_PROMPT + "\n\n"
+        if history:
+            for message in history[-config.CHAT_HISTORY_MAX_LENGTH:]:
+                role = "User" if message.get("role") == "user" else "Assistant"
+                conversation += f"{role}: {message.get('content', '')}\n\n"
 
-            # Build conversation context
-            conversation = SYSTEM_PROMPT + "\n\n"
-
-            # Add recent history for context
-            if history:
-                for msg in history[-CHAT_HISTORY_MAX_LENGTH:]:
-                    role = "User" if msg.get("role") == "user" else "Assistant"
-                    content = msg.get("content", "")
-                    conversation += f"{role}: {content}\n\n"
-
-            # Add current message
-            conversation += f"User: {user_message}\nAssistant:"
-
-            # Call Gemini API
-            response = self.model.generate_content(
-                conversation,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=512,
-                ),
-            )
-
-            if response and response.text:
-                answer = response.text.strip()
-                logger.info(f"Gemini response generated (call #{self.call_count})")
-                return answer
-            else:
-                logger.warning("Gemini returned empty response")
-                return self._fallback_response(user_message)
-
-        except Exception as e:
-            logger.error(f"Gemini API error: {e}")
-            return self._fallback_response(user_message)
+        conversation += f"User: {user_message}\nAssistant:"
+        return conversation
 
     def _fallback_response(self, message: str) -> str:
-        """
-        Provide a fallback response when Gemini is unavailable.
-        Uses keyword matching to provide relevant default responses.
+        """Provide a topic-specific fallback response when Gemini is unavailable."""
 
-        Args:
-            message: User message to analyze
-
-        Returns:
-            A relevant fallback response
-        """
         msg_lower = message.lower()
-
         if any(word in msg_lower for word in ["india", "indian", "lok sabha", "eci"]):
             return (
                 "🇮🇳 India uses a Parliamentary system. The Election Commission of India (ECI) "
@@ -153,6 +107,47 @@ class GeminiService:
             "I'm ElectIQ, your election education guide! Ask me about voting systems, timelines, "
             "or the election process in India, USA, UK, EU, Brazil, and more. 🗳️"
         )
+
+    def generate_response(
+        self,
+        user_message: str,
+        history: Optional[list[dict[str, Any]]] = None,
+        temperature: float = 0.7,
+    ) -> str:
+        """Generate a response using Gemini or the local fallback text.
+
+        Args:
+            user_message: The user's question or message.
+            history: Previous chat messages for context.
+            temperature: Sampling temperature between 0.0 and 1.0.
+
+        Returns:
+            The model response, or a deterministic fallback string.
+        """
+
+        if not self.available or not self.model:
+            return self._fallback_response(user_message)
+
+        try:
+            self.call_count += 1
+            conversation = self._build_conversation(user_message, history)
+            response = self.model.generate_content(
+                conversation,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=512,
+                ),
+            )
+            if response and response.text:
+                logger.info("Gemini response generated (call #%s)", self.call_count)
+                return response.text.strip()
+
+            logger.warning("Gemini returned empty response")
+            return self._fallback_response(user_message)
+
+        except (AttributeError, TypeError, ValueError, GeminiServiceError) as exc:
+            logger.error("Gemini API error", exc_info=True)
+            return self._fallback_response(user_message)
 
     def is_available(self) -> bool:
         """Check if Gemini service is available."""
