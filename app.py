@@ -4,21 +4,29 @@ The module configures logging, creates the Flask app, registers blueprints, and
 keeps the legacy ELECTION_DATA and fallback_response exports used by tests.
 """
 
+import json
 import logging
+import time
 from typing import Any, Mapping
 
-from flask import Flask, Response, render_template
+from flask import Flask, Response, g, jsonify, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 import config
+from routes.analytics import analytics_bp
 from routes.chat import chat_bp
+from routes.compare import compare_bp
 from routes.elections import _load_elections_data, elections_bp
+from routes.glossary import glossary_bp
 from routes.health import health_bp
+from routes.quiz import quiz_bp
 from routes.translate import translate_bp
+from services.security_service import get_security_service
 
-logging.basicConfig(level=getattr(logging, config.LOG_LEVEL, logging.INFO), format=config.LOG_FORMAT)
+logging.basicConfig(level=logging.INFO, format=config.LOG_FORMAT)
 logger = logging.getLogger(__name__)
+security_service = get_security_service()
 
 
 def _build_country_summary(elections_data: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -58,6 +66,39 @@ def _apply_security_headers(response: Response) -> Response:
     response.headers[config.HEADER_REFERRER_POLICY] = config.HEADER_VALUE_STRICT_REFERRER_POLICY
     response.headers[config.HEADER_CONTENT_SECURITY_POLICY] = config.CSP_HEADER
     response.headers[config.HEADER_PERMISSIONS_POLICY] = config.HEADER_VALUE_PERMISSIONS_POLICY
+    response.headers[config.HEADER_CROSS_ORIGIN_OPENER_POLICY] = config.HEADER_VALUE_CROSS_ORIGIN_OPENER_POLICY
+    response.headers[config.HEADER_CROSS_ORIGIN_RESOURCE_POLICY] = config.HEADER_VALUE_CROSS_ORIGIN_RESOURCE_POLICY
+    response.headers[config.HEADER_STRICT_TRANSPORT_SECURITY] = config.HEADER_VALUE_STRICT_TRANSPORT_SECURITY
+
+    if request.path.startswith("/api/"):
+        response.headers[config.HEADER_CACHE_CONTROL] = config.HEADER_VALUE_NO_STORE
+
+    return response
+
+
+def _log_audit_event(response: Response) -> Response:
+    """Log a structured audit record for the current request."""
+
+    start_time = getattr(g, "request_start", None)
+    duration_ms = int((time.perf_counter() - start_time) * 1000) if start_time is not None else 0
+    audit_record = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "method": request.method,
+        "path": request.path,
+        "status": response.status_code,
+        "duration_ms": duration_ms,
+        "request_id": getattr(g, "request_id", ""),
+    }
+    logger.info(json.dumps(audit_record, separators=(",", ":")))
+    return response
+
+
+def _attach_request_id(response: Response) -> Response:
+    """Attach the generated request ID to the response headers."""
+
+    request_id = getattr(g, "request_id", "")
+    if request_id:
+        response.headers[config.REQUEST_ID_HEADER] = request_id
     return response
 
 
@@ -71,6 +112,7 @@ def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["SECRET_KEY"] = config.SECRET_KEY
     app.config["TESTING"] = config.TESTING
+    app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH_BYTES
 
     if config.RATELIMIT_ENABLED:
         Limiter(
@@ -81,7 +123,22 @@ def create_app() -> Flask:
         )
         logger.info("Rate limiting enabled")
 
+    @app.before_request
+    def _prepare_request_context() -> None:
+        """Initialize tracing context before each request."""
+
+        g.request_start = time.perf_counter()
+        g.request_id = security_service.generate_request_id()
+
     app.after_request(_apply_security_headers)
+    app.after_request(_attach_request_id)
+    app.after_request(_log_audit_event)
+
+    @app.errorhandler(413)
+    def request_too_large(_: Exception) -> tuple[dict[str, Any], int]:
+        """Return a JSON payload for oversized requests."""
+
+        return jsonify({"error": config.ERROR_REQUEST_TOO_LARGE, "max_size_bytes": config.MAX_CONTENT_LENGTH_BYTES}), config.HTTP_REQUEST_ENTITY_TOO_LARGE
 
     @app.route("/")
     def index() -> str:
@@ -99,6 +156,10 @@ def create_app() -> Flask:
     app.register_blueprint(elections_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(translate_bp)
+    app.register_blueprint(quiz_bp, url_prefix="/api")
+    app.register_blueprint(glossary_bp, url_prefix="/api")
+    app.register_blueprint(compare_bp, url_prefix="/api")
+    app.register_blueprint(analytics_bp, url_prefix="/api")
 
     logger.info("Flask application created and configured")
     return app

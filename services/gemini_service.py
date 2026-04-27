@@ -149,6 +149,45 @@ class GeminiService:
             logger.error("Gemini API error", exc_info=True)
             return self._fallback_response(user_message)
 
+    def summarize_history(self, history: list[dict[str, Any]]) -> str:
+        """Summarize older chat messages for context compression.
+
+        Args:
+            history: Conversation history to summarize.
+
+        Returns:
+            A concise summary of the provided conversation history.
+        """
+
+        if not history:
+            return ""
+
+        if not self.available or not self.model:
+            recent_messages = [message.get("content", "") for message in history[-3:]]
+            return "Summary of earlier discussion: " + " | ".join(filter(None, recent_messages))
+
+        prompt = (
+            "Summarize the following election conversation in 3 concise bullet points "
+            "focused on the user's intent and the main facts discussed:\n\n"
+            + "\n".join(f"{message.get('role', 'user')}: {message.get('content', '')}" for message in history)
+        )
+
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2,
+                    max_output_tokens=180,
+                ),
+            )
+            if response and response.text:
+                return response.text.strip()
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.error("Gemini summary error", exc_info=True)
+
+        recent_messages = [message.get("content", "") for message in history[-3:]]
+        return "Summary of earlier discussion: " + " | ".join(filter(None, recent_messages))
+
     def is_available(self) -> bool:
         """Check if Gemini service is available."""
         return self.available

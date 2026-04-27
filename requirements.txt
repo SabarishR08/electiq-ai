@@ -3,6 +3,7 @@ gunicorn==23.0.0
 flask-limiter==3.7.0
 bleach==6.1.0
 beautifulsoup4==4.12.3
+types-bleach==6.1.0.20240906
 
 # Google Cloud Services
 google-generativeai==0.8.3
@@ -14,6 +15,7 @@ firebase-admin==6.5.0
 pytest==8.0.0
 pytest-cov==4.1.0
 pytest-mock==3.14.0
+types-requests==2.32.0.20240907
 
 # Additional utilities
 python-dotenv==1.0.0

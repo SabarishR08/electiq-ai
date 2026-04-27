@@ -7,7 +7,6 @@ stable JSON responses for the front end and tests.
 import logging
 from typing import Any, Optional
 
-import bleach
 from flask import Blueprint, jsonify, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -17,6 +16,7 @@ import config
 from services.exceptions import ValidationError
 from services.firebase_service import get_firebase_service
 from services.gemini_service import get_gemini_service
+from services.security_service import get_security_service, require_json_fields
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ chat_bp = Blueprint("chat", __name__)
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
+security_service = get_security_service()
 
 
 def _sanitize_input(text: str, max_length: int = config.MAX_MESSAGE_LENGTH) -> str:
@@ -40,17 +41,53 @@ def _sanitize_input(text: str, max_length: int = config.MAX_MESSAGE_LENGTH) -> s
     if not text or not isinstance(text, str):
         return ""
 
-    cleaned_text = text.strip()
-    if len(cleaned_text) < config.MIN_MESSAGE_LENGTH or len(cleaned_text) > max_length:
+    if len(text) > max_length:
         return ""
 
-    return bleach.clean(cleaned_text, tags=[], strip=True)
+    try:
+        return security_service.sanitize_html(text, max_length)
+    except ValidationError:
+        return ""
 
 
 def _error_response(message: str, status_code: int) -> tuple[dict[str, str], int]:
     """Build a JSON error response."""
 
     return {"error": message}, status_code
+
+
+def _normalize_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize and sanitize chat history payloads."""
+
+    sanitized_history: list[dict[str, Any]] = []
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+
+        role = str(message.get("role", "assistant")).strip().lower()
+        if role not in {"user", "assistant"}:
+            role = "assistant"
+
+        content = _sanitize_input(str(message.get("content", "")), 1000)
+        if content:
+            sanitized_history.append({"role": role, "content": content})
+
+    return sanitized_history
+
+
+def _summarize_history_if_needed(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Summarize older messages when the conversation gets long."""
+
+    if len(history) <= config.CHAT_SUMMARY_TRIGGER_MESSAGES:
+        return history
+
+    gemini_service = get_gemini_service()
+    older_history = history[:-config.CHAT_SUMMARY_RECENT_MESSAGES]
+    recent_history = history[-config.CHAT_SUMMARY_RECENT_MESSAGES:]
+    summary = gemini_service.summarize_history(older_history)
+    summarized_history = [{"role": "assistant", "content": f"Conversation summary: {summary}"}] if summary else []
+    summarized_history.extend(recent_history)
+    return summarized_history
 
 
 def _parse_chat_request() -> tuple[str, list[dict[str, Any]], str, Optional[str]]:
@@ -79,6 +116,8 @@ def _parse_chat_request() -> tuple[str, list[dict[str, Any]], str, Optional[str]
     if not isinstance(history, list):
         raise ValidationError("History must be a list")
 
+    history = _normalize_history(history)
+
     country = str(data.get("country", "")).lower()
     session_id = data.get("session_id")
     if session_id is not None and not isinstance(session_id, str):
@@ -96,6 +135,28 @@ def _save_chat_history(session_id: str, user_message: str, response_text: str) -
         firebase_service.save_message(session_id, "assistant", response_text)
 
 
+def _build_country_suggestions(country_id: str) -> list[str]:
+    """Build country-specific suggested questions from election data."""
+
+    from routes.elections import _load_elections_data
+
+    country_data = _load_elections_data().get(country_id, {})
+    country_name = country_data.get("name", country_id.title())
+    body = country_data.get("body", "the election authority")
+    system = country_data.get("system", "the electoral system")
+    frequency = country_data.get("frequency", "the election schedule")
+    facts = country_data.get("facts", [])
+    fact_question = facts[0] if facts else f"What is a key fact about {country_name}?"
+
+    return [
+        f"How do elections work in {country_name}?",
+        f"What role does {body} play in {country_name}?",
+        f"Why is {system} used in {country_name}?",
+        f"How often are elections held in {country_name}? ({frequency})",
+        f"{fact_question}",
+    ]
+
+
 @chat_bp.route("/api/chat", methods=["POST"])
 @limiter.limit(f"{config.CHAT_REQUESTS_PER_MINUTE}/minute")
 def chat() -> tuple[dict, int]:
@@ -108,6 +169,7 @@ def chat() -> tuple[dict, int]:
     try:
         user_message, history, country, session_id = _parse_chat_request()
         gemini_service = get_gemini_service()
+        history = _summarize_history_if_needed(history)
         response_text = gemini_service.generate_response(
             user_message=user_message,
             history=history,
@@ -135,6 +197,48 @@ def chat() -> tuple[dict, int]:
     except (BadRequest, TypeError, ValueError) as exc:
         logger.error("Chat route error", exc_info=True)
         return _error_response(config.ERROR_FAILED_RESPONSE, config.HTTP_INTERNAL_SERVER_ERROR)
+
+
+@chat_bp.route("/api/chat/feedback", methods=["POST"])
+@limiter.limit(f"{config.CHAT_REQUESTS_PER_MINUTE}/minute")
+@require_json_fields("session_id", "message_id", "rating")
+def chat_feedback() -> tuple[dict[str, Any], int]:
+    """Store feedback for a chat response."""
+
+    payload = request.get_json(silent=True) or {}
+    session_id = str(payload.get("session_id", "")).strip()
+    message_id = str(payload.get("message_id", "")).strip()
+    rating = payload.get("rating")
+
+    if not session_id or not message_id:
+        return _error_response("Invalid feedback identifiers", config.HTTP_BAD_REQUEST)
+
+    if rating not in (-1, 1):
+        return _error_response("rating must be 1 or -1", config.HTTP_BAD_REQUEST)
+
+    firebase_service = get_firebase_service()
+    if not firebase_service.is_available():
+        return _error_response("Feedback storage not available", config.HTTP_SERVICE_UNAVAILABLE)
+
+    if firebase_service.save_feedback(session_id, message_id, int(rating)):
+        return jsonify({"saved": True}), config.HTTP_OK
+
+    return _error_response("Failed to store feedback", config.HTTP_INTERNAL_SERVER_ERROR)
+
+
+@chat_bp.route("/api/chat/suggestions", methods=["GET"])
+@limiter.limit(f"{config.CHAT_REQUESTS_PER_MINUTE}/minute")
+def chat_suggestions() -> tuple[dict[str, Any], int]:
+    """Return country-specific suggested chat questions."""
+
+    country = request.args.get("country", "")
+    try:
+        country_id = security_service.validate_country_id(country)
+    except ValidationError as exc:
+        return _error_response(str(exc), config.HTTP_BAD_REQUEST)
+
+    suggestions = _build_country_suggestions(country_id)
+    return jsonify({"country": country_id, "suggestions": suggestions[:5]}), config.HTTP_OK
 
 
 @chat_bp.route("/api/chat/grounded", methods=["POST"])

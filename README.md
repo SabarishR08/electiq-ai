@@ -1,121 +1,112 @@
-﻿# ElectIQ - Global Election Education Platform
+﻿# ElectIQ
 
-Making democracy understandable with interactive timelines, voting guides, and AI-powered Q&A.
+ElectIQ is a production-focused election education platform built with Flask. It combines structured country data, AI-assisted explanations, translation tools, glossary lookups, quizzes, comparison views, and lightweight analytics in a single deployment.
 
-## Project Overview
+The live Cloud Run URL remains:
+https://electiq-ai-253750832620.us-central1.run.app
 
-ElectIQ is a production-grade educational platform featuring:
-- 5 countries: India, USA, UK, EU, Brazil
-- Interactive election timelines
-- Step-by-step voting guides
-- Election system comparison view
-- Country quiz mode
-- AI chat powered by Google Gemini
-- Translation support powered by Google Cloud Translate
-- Accessibility-first frontend design
-- Cloud Run deployment with CI/CD
+## What It Does
 
-## Tech Stack
+ElectIQ helps users explore how elections work across India, the USA, the UK, the EU, and Brazil. The app now includes:
 
-- Backend: Flask 3.1.0 (Python 3.11+)
-- AI: Google Gemini 1.5 Flash
-- Translation: Google Cloud Translate v2
-- Storage: Firebase Admin / Firestore
-- Grounding: Vertex AI (service wiring included)
-- Deployment: Google Cloud Run
-- Testing: pytest
+- Country profiles, timelines, voting steps, and facts
+- AI chat with optional history summarization and feedback capture
+- Grounded responses through Vertex-backed tooling when available
+- Translation and language detection endpoints
+- Glossary search and contextual explanations
+- Side-by-side country comparison
+- Quiz generation and scoring
+- In-memory analytics for popular-country tracking
+- Request tracing, security headers, and request size protection
 
-## Project Structure
+## Architecture
 
-```text
-electiq-ai/
-  app.py
-  config.py
-  requirements.txt
-  Dockerfile
-  cloudbuild.yaml
-  data/
-    elections.json
-    glossary.json
-  routes/
-    health.py
-    elections.py
-    chat.py
-    translate.py
-  services/
-    gemini_service.py
-    translate_service.py
-    firebase_service.py
-    vertex_service.py
-  templates/
-    index.html
-  static/
-    css/style.css
-    js/app.js
-    js/chat.js
-    js/timeline.js
-    js/translate.js
-  tests/
-    test_routes.py
-    test_services.py
-    test_security.py
-    test_accessibility.py
-    test_data.py
-```
+The application is split into thin blueprints and service wrappers so each layer stays focused:
 
-## API Endpoints
+- `app.py` wires the Flask app, security headers, request IDs, and blueprint registration
+- `routes/` contains the HTTP surface area
+- `services/` wraps Gemini, Firebase, Translate, Vertex, and security utilities
+- `data/` stores the static election and glossary JSON datasets
+- `tests/` covers routes, services, accessibility, security, and data integrity
 
-- GET /health
-- GET /api/elections
-- GET /api/elections/<country_id>
-- GET /api/elections/<country_id>/timeline
-- GET /api/elections/<country_id>/voting-steps
-- GET /api/glossary
-- GET /api/glossary/<term>
-- POST /api/chat
-- POST /api/chat/grounded
-- GET /api/chat/history/<session_id>
-- POST /api/translate
-- POST /api/translate/detect
-- GET /api/languages
+## API Surface
+
+Core endpoints include:
+
+- `GET /health`
+- `GET /api/elections`
+- `GET /api/elections/<country_id>`
+- `GET /api/elections/<country_id>/timeline`
+- `GET /api/elections/<country_id>/voting-steps`
+- `GET /api/elections/<country_id>/facts`
+- `GET /api/elections/search?q=...`
+- `POST /api/chat`
+- `POST /api/chat/grounded`
+- `POST /api/chat/feedback`
+- `GET /api/chat/suggestions?country=...`
+- `GET /api/chat/history/<session_id>`
+- `POST /api/translate`
+- `POST /api/translate/detect`
+- `POST /translate/batch`
+- `GET /translate/supported`
+- `GET /api/languages`
+- `GET /api/glossary`
+- `GET /api/glossary/<term_slug>`
+- `GET /api/glossary/search?q=...`
+- `POST /api/glossary/explain`
+- `POST /api/quiz/generate`
+- `POST /api/quiz/submit`
+- `GET /api/quiz/countries`
+- `GET /api/compare?countries=india,usa`
+- `GET /api/compare/metrics`
+- `POST /api/analytics/track`
+- `GET /api/analytics/popular`
 
 ## Security
 
-- Input sanitization with bleach
-- Rate limiting with Flask-Limiter
-- Security headers including CSP, X-Frame-Options, and X-Content-Type-Options
-- Configurable limiter backend via RATELIMIT_STORAGE_URI
-  - Local default: memory://
-  - Production recommendation: Redis URI
+ElectIQ now applies a layered security baseline:
 
-## Accessibility
+- HTML sanitization and injection detection for user input
+- Rate limiting on chat, translation, quiz, glossary, comparison, and analytics routes
+- Request IDs on every response for traceability
+- JSON request validation helpers for required fields
+- Security headers for content type, framing, referrer policy, CSP, and transport policy
+- `MAX_CONTENT_LENGTH` protection with a JSON 413 handler
 
-- ARIA landmarks and semantic structure
-- Keyboard-friendly interaction patterns
-- Visible focus states
-- Skip link support
-- High contrast editorial theme
+## Technology
+
+- Flask 3.1.0
+- Google Gemini
+- Google Cloud Translate
+- Firebase Admin / Firestore
+- Vertex AI Search / grounding helpers
+- Flask-Limiter
+- pytest
+
+## Local Development
+
+Install dependencies and start the app:
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+The application listens on the host and port defined in `config.py`.
 
 ## Testing
 
-Run all tests:
+Run the full test suite:
 
 ```bash
-pytest tests/ -v
+pytest tests -v
 ```
 
-Current status:
-- 299 tests passing
+Current validated status: 319 tests passing.
 
 ## Deployment
 
-Deployed Cloud Run service URL:
-- https://electiq-ai-253750832620.us-central1.run.app
-
-Health endpoint:
-- https://electiq-ai-253750832620.us-central1.run.app/health
-
-Deploy command:
+Deploy to Cloud Run with the existing service name and URL:
 
 ```bash
 gcloud run deploy electiq-ai \
@@ -125,19 +116,18 @@ gcloud run deploy electiq-ai \
   --allow-unauthenticated
 ```
 
-## Local Setup
+Health check:
 
-```bash
-pip install -r requirements.txt
-python app.py
-```
+https://electiq-ai-253750832620.us-central1.run.app/health
 
 ## Environment Variables
 
-- GEMINI_API_KEY
-- GOOGLE_CLOUD_PROJECT
-- GOOGLE_TRANSLATE_ENABLED
-- FIREBASE_ENABLED
-- FIREBASE_CREDENTIALS_PATH
-- VERTEX_GROUNDING_ENABLED
-- RATELIMIT_STORAGE_URI
+Common configuration values:
+
+- `GEMINI_API_KEY`
+- `GOOGLE_CLOUD_PROJECT`
+- `GOOGLE_TRANSLATE_ENABLED`
+- `FIREBASE_ENABLED`
+- `FIREBASE_CREDENTIALS_PATH`
+- `VERTEX_GROUNDING_ENABLED`
+- `RATELIMIT_STORAGE_URI`

@@ -10,9 +10,21 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 from app import app, ELECTION_DATA, fallback_response
 
 SUPPORTED_COUNTRIES = ["india", "usa", "uk", "eu", "brazil"]
+
+
+class _DisabledGeminiService:
+    def is_available(self):
+        return False
+
+    def generate_response(self, *args, **kwargs):
+        return ""
+
+    def summarize_history(self, history):
+        return ""
 
 
 @pytest.fixture
@@ -202,6 +214,14 @@ class TestTranslateRoute:
         # May return 404 or 503 if disabled, but endpoint should exist or be gracefully disabled
         assert res.status_code in [200, 404, 503]
 
+    def test_supported_language_metadata(self, client):
+        """Supported language metadata endpoint should return details."""
+        res = client.get("/translate/supported")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert "en" in data
+        assert data["ar"]["rtl"] is True
+
 
 class TestGlossaryRoute:
     """Glossary endpoints tests."""
@@ -213,6 +233,125 @@ class TestGlossaryRoute:
         data = json.loads(res.data)
         assert "glossary" in data
         assert len(data["glossary"]) > 20
+
+    def test_glossary_term_lookup(self, client):
+        """Glossary term lookup should resolve slugs."""
+        res = client.get("/api/glossary/ballot")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["term"] == "Ballot"
+        assert "related_terms" in data
+
+    def test_glossary_search(self, client):
+        """Glossary search should return ranked matches."""
+        res = client.get("/api/glossary/search?q=electoral")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["query"] == "electoral"
+        assert len(data["results"]) > 0
+
+    def test_glossary_explain(self, client, monkeypatch):
+        """Glossary explain should return contextual output."""
+        monkeypatch.setattr("routes.glossary.get_gemini_service", lambda: _DisabledGeminiService())
+        res = client.post(
+            "/api/glossary/explain",
+            json={"term": "Ballot", "context": "voting"},
+            content_type="application/json",
+        )
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["term"] == "Ballot"
+        assert "explanation" in data
+
+
+class TestQuizRoute:
+    """Quiz endpoints tests."""
+
+    def test_quiz_country_list(self, client):
+        """Quiz country list should be available."""
+        res = client.get("/api/quiz/countries")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert len(data["countries"]) == len(SUPPORTED_COUNTRIES)
+
+    def test_generate_quiz(self, client, monkeypatch):
+        """Quiz generation should return five questions."""
+        monkeypatch.setattr("routes.quiz.get_gemini_service", lambda: _DisabledGeminiService())
+        res = client.post(
+            "/api/quiz/generate",
+            json={"country": "india", "difficulty": "beginner"},
+            content_type="application/json",
+        )
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["country"] == "india"
+        assert len(data["questions"]) == 5
+
+    def test_submit_quiz(self, client, monkeypatch):
+        """Quiz submission should return a scored response."""
+        monkeypatch.setattr("routes.quiz.get_gemini_service", lambda: _DisabledGeminiService())
+        answers = [{"id": i, "selected": 0} for i in range(1, 6)]
+        res = client.post(
+            "/api/quiz/submit",
+            json={"country": "india", "difficulty": "beginner", "answers": answers},
+            content_type="application/json",
+        )
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["total"] == 5
+        assert data["score"] == 5
+        assert data["percentage"] == 100
+
+
+class TestCompareRoute:
+    """Comparison endpoint tests."""
+
+    def test_compare_two_countries(self, client):
+        """Compare endpoint should return normalized comparison data."""
+        res = client.get("/api/compare?countries=india,usa")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert len(data["countries"]) == 2
+        assert "comparison" in data
+
+    def test_compare_limit_enforced(self, client):
+        """Compare endpoint should reject too many countries."""
+        res = client.get("/api/compare?countries=india,usa,uk,eu,brazil")
+        assert res.status_code == 400
+
+    def test_compare_metrics(self, client):
+        """Comparison metrics endpoint should be available."""
+        res = client.get("/api/compare/metrics")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert len(data["metrics"]) > 0
+
+
+class TestAnalyticsRoute:
+    """Analytics endpoint tests."""
+
+    def test_track_country_view(self, client):
+        """Tracking should accept a country view event."""
+        res = client.post(
+            "/api/analytics/track",
+            json={"event": "country_view", "country": "india"},
+            content_type="application/json",
+        )
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert data["tracked"] is True
+
+    def test_popular_countries_updates(self, client):
+        """Popular countries endpoint should reflect tracked events."""
+        client.post(
+            "/api/analytics/track",
+            json={"event": "country_view", "country": "india"},
+            content_type="application/json",
+        )
+        res = client.get("/api/analytics/popular")
+        assert res.status_code == 200
+        data = json.loads(res.data)
+        assert len(data["countries"]) >= 1
 
 
 class TestDataIntegrity:

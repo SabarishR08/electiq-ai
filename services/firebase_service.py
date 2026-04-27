@@ -241,6 +241,41 @@ class FirebaseService:
             logger.error("Error deleting session", exc_info=True)
             return False
 
+    def save_feedback(self, session_id: str, message_id: str, rating: int) -> bool:
+        """Store feedback for a generated chat response.
+
+        Args:
+            session_id: Chat session identifier.
+            message_id: Response message identifier.
+            rating: Feedback rating, where 1 means helpful and -1 means not helpful.
+
+        Returns:
+            True when the feedback write succeeds.
+        """
+
+        if not self.available or not self.db:
+            logger.warning("Save feedback requested but Firebase unavailable")
+            return False
+
+        if rating not in (-1, 1):
+            logger.warning("Invalid feedback rating")
+            return False
+
+        try:
+            session_ref = self._get_session_reference(session_id)
+            feedback_ref = session_ref.collection("feedback").document(message_id)
+            feedback_ref.set({
+                "rating": rating,
+                "helpful": rating > 0,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }, merge=True)
+            logger.info("Feedback saved for session %s message %s", session_id, message_id)
+            return True
+
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            logger.error("Error saving feedback", exc_info=True)
+            return False
+
     def is_available(self) -> bool:
         """Check if Firebase service is available."""
         return self.available

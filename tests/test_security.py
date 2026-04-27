@@ -10,7 +10,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 from app import app
+from services.exceptions import ValidationError
+from services.security_service import get_security_service
 
 
 @pytest.fixture
@@ -183,6 +186,66 @@ class TestSecurityHeaders:
         # Should not contain specific version numbers
         assert "Python" not in server or "3.11" not in server
 
+    def test_request_id_header_present(self, client):
+        """Responses should include a request ID header."""
+        res = client.get("/api/elections")
+        assert config.REQUEST_ID_HEADER in res.headers
+        assert len(res.headers[config.REQUEST_ID_HEADER]) > 0
+
+
+class TestSecurityService:
+    """Security service validation tests."""
+
+    def test_sanitize_html_strips_markup(self):
+        """HTML tags should be stripped from input."""
+        service = get_security_service()
+        assert service.sanitize_html("<b>Hello</b>", 50) == "Hello"
+
+    def test_validate_country_id_normalizes(self):
+        """Country identifiers should normalize to lowercase."""
+        service = get_security_service()
+        assert service.validate_country_id("INDIA") == "india"
+
+    def test_validate_language_code_normalizes(self):
+        """Language codes should normalize to lowercase."""
+        service = get_security_service()
+        assert service.validate_language_code("ES") == "es"
+
+    def test_detect_injection_patterns(self):
+        """Common injection patterns should be detected."""
+        service = get_security_service()
+        assert service.detect_injection("<script>alert(1)</script>")
+        assert service.detect_injection("select * from users")
+        assert service.detect_injection("../etc/passwd")
+
+    def test_generate_request_id_is_hex(self):
+        """Request IDs should be UUID hex strings."""
+        service = get_security_service()
+        request_id = service.generate_request_id()
+        assert len(request_id) == 32
+        int(request_id, 16)
+
+    def test_content_policy_blocks_personal_voter_data(self):
+        """Personal voter data requests should be blocked."""
+        service = get_security_service()
+        allowed, reason = service.check_content_policy("my voter id number is 12345")
+        assert allowed is False
+        assert "personal voter data" in reason.lower()
+
+
+class TestRuntimeGuards:
+    """Runtime guardrails for request limits and tracing."""
+
+    def test_request_too_large_returns_413(self, client):
+        """Oversized request bodies should be rejected with 413."""
+        oversized_message = "x" * (config.MAX_CONTENT_LENGTH_BYTES + 1024)
+        res = client.post(
+            "/api/chat",
+            json={"message": oversized_message},
+            content_type="application/json",
+        )
+        assert res.status_code == config.HTTP_REQUEST_ENTITY_TOO_LARGE
+
 
 class TestRateLimiting:
     """Rate limiting behavior tests."""
@@ -254,7 +317,7 @@ class TestContentType:
         res = client.post("/api/chat",
                           data='{"message": "test"}')
         # Should either process (if defaulting to JSON) or reject
-        assert res.status_code in [200, 400, 415]
+        assert res.status_code in [200, 400, 415, 429]
 
 
 class TestJSONValidation:

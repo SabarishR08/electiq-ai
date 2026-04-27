@@ -16,6 +16,8 @@ HOST: str = os.environ.get("HOST", "0.0.0.0")
 SERVICE_NAME: str = "ElectIQ"
 SERVICE_VERSION: str = "1.0.0"
 DEFAULT_CLOUD_RUN_URL: str = "https://electiq-ai-253750832620.us-central1.run.app"
+MAX_CONTENT_LENGTH_BYTES: int = 1 * 1024 * 1024
+REQUEST_ID_HEADER: str = "X-Request-ID"
 
 # === Google AI Services ===
 GEMINI_API_KEY: Optional[str] = os.environ.get("GEMINI_API_KEY")
@@ -40,6 +42,10 @@ RATELIMIT_STORAGE_URI: str = os.environ.get("RATELIMIT_STORAGE_URI", "memory://"
 CHAT_REQUESTS_PER_MINUTE: int = 20
 TRANSLATE_REQUESTS_PER_MINUTE: int = 30
 GENERAL_REQUESTS_PER_MINUTE: int = 60
+QUIZ_REQUESTS_PER_MINUTE: int = 10
+ANALYTICS_REQUESTS_PER_MINUTE: int = 60
+GLOSSARY_REQUESTS_PER_MINUTE: int = 30
+COMPARE_REQUESTS_PER_MINUTE: int = 30
 
 # === Input Validation ===
 MIN_MESSAGE_LENGTH: int = 1
@@ -47,14 +53,37 @@ MAX_MESSAGE_LENGTH: int = 500
 MAX_TEXT_TRANSLATION_LENGTH: int = 5000
 MAX_SESSION_ID_LENGTH: int = 100
 CHAT_HISTORY_MAX_LENGTH: int = 8
+CHAT_SUMMARY_TRIGGER_MESSAGES: int = 10
+CHAT_SUMMARY_RECENT_MESSAGES: int = 6
 RESPONSE_TIMEOUT_SECONDS: int = 60
 CACHE_TTL_SECONDS: int = 3600
 SUPPORTED_LANGUAGES: list[str] = ["en", "hi", "ta", "es", "fr", "de", "pt", "ar"]
 ELECTION_COUNTRY_IDS: list[str] = ["india", "usa", "uk", "eu", "brazil"]
 ALLOWED_COUNTRIES: list[str] = ELECTION_COUNTRY_IDS
+VALID_COUNTRY_IDS: list[str] = ELECTION_COUNTRY_IDS
+QUIZ_DIFFICULTIES: list[str] = ["beginner", "intermediate", "advanced"]
+QUIZ_QUESTION_COUNT: int = 5
+QUIZ_MAX_ANSWER_OPTIONS: int = 4
+QUIZ_MAX_COUNTRIES: int = 5
+BATCH_TRANSLATION_MAX_ITEMS: int = 10
+COMPARE_MAX_COUNTRIES: int = 4
+GLOSSARY_SEARCH_LIMIT: int = 10
+ANALYTICS_TOP_COUNTRIES_LIMIT: int = 10
+STATIC_ESTIMATED_STEP_MINUTES: int = 3
+API_SEARCH_MAX_RESULTS: int = 10
 
 # === Supported Languages ===
 DEFAULT_SOURCE_LANGUAGE: str = "en"
+SUPPORTED_LANGUAGE_DETAILS: dict[str, dict[str, object]] = {
+    "en": {"name": "English", "native": "English", "rtl": False},
+    "hi": {"name": "Hindi", "native": "हिन्दी", "rtl": False},
+    "ta": {"name": "Tamil", "native": "தமிழ்", "rtl": False},
+    "es": {"name": "Spanish", "native": "Español", "rtl": False},
+    "fr": {"name": "French", "native": "Français", "rtl": False},
+    "de": {"name": "German", "native": "Deutsch", "rtl": False},
+    "pt": {"name": "Portuguese", "native": "Português", "rtl": False},
+    "ar": {"name": "Arabic", "native": "العربية", "rtl": True},
+}
 
 # === Election Countries ===
 COUNTRY_INDIA: str = "india"
@@ -70,13 +99,21 @@ HEADER_XSS_PROTECTION: str = "X-XSS-Protection"
 HEADER_REFERRER_POLICY: str = "Referrer-Policy"
 HEADER_CONTENT_SECURITY_POLICY: str = "Content-Security-Policy"
 HEADER_PERMISSIONS_POLICY: str = "Permissions-Policy"
+HEADER_CROSS_ORIGIN_OPENER_POLICY: str = "Cross-Origin-Opener-Policy"
+HEADER_CROSS_ORIGIN_RESOURCE_POLICY: str = "Cross-Origin-Resource-Policy"
+HEADER_STRICT_TRANSPORT_SECURITY: str = "Strict-Transport-Security"
+HEADER_CACHE_CONTROL: str = "Cache-Control"
 HEADER_VALUE_NOSNIFF: str = "nosniff"
 HEADER_VALUE_SAMEORIGIN: str = "SAMEORIGIN"
 HEADER_VALUE_XSS_BLOCK: str = "1; mode=block"
 HEADER_VALUE_STRICT_REFERRER_POLICY: str = "strict-origin-when-cross-origin"
 HEADER_VALUE_PERMISSIONS_POLICY: str = (
-    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    "camera=(), microphone=(), geolocation=()"
 )
+HEADER_VALUE_CROSS_ORIGIN_OPENER_POLICY: str = "same-origin"
+HEADER_VALUE_CROSS_ORIGIN_RESOURCE_POLICY: str = "same-origin"
+HEADER_VALUE_STRICT_TRANSPORT_SECURITY: str = "max-age=31536000; includeSubDomains"
+HEADER_VALUE_NO_STORE: str = "no-store"
 
 CORS_HEADERS: dict[str, str] = {
     HEADER_CONTENT_TYPE_OPTIONS: HEADER_VALUE_NOSNIFF,
@@ -115,11 +152,25 @@ ERROR_FAILED_HISTORY: str = "Failed to retrieve chat history"
 ERROR_FAILED_GLOSSARY: str = "Failed to fetch glossary"
 ERROR_FAILED_LANGUAGE_DETECTION: str = "Failed to detect language"
 ERROR_INVALID_SESSION_ID: str = "Invalid session_id"
+ERROR_REQUEST_TOO_LARGE: str = "Request too large"
+ERROR_MISSING_REQUIRED_FIELDS: str = "Missing required fields"
+
+# === Content Policy ===
+PROFANITY_WORDS: list[str] = ["fuck", "shit", "bitch", "asshole", "bastard"]
+PERSONAL_VOTER_PATTERNS: list[str] = [
+    "personal voter",
+    "voter id number",
+    "my voter id",
+    "voter registration details",
+    "who am i registered with",
+    "polling station for me",
+]
 
 # === HTTP Status Codes ===
 HTTP_OK: int = 200
 HTTP_BAD_REQUEST: int = 400
 HTTP_NOT_FOUND: int = 404
+HTTP_REQUEST_ENTITY_TOO_LARGE: int = 413
 HTTP_SERVICE_UNAVAILABLE: int = 503
 HTTP_INTERNAL_SERVER_ERROR: int = 500
 
